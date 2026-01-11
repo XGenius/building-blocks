@@ -1,0 +1,21 @@
+# Railway TOML Configuration
+# Use for services that need custom build commands or Docker
+
+[build]
+# Options: "nixpacks", "dockerfile", "railpack"
+builder = "nixpacks"
+
+# Custom build command (optional)
+# buildCommand = "npm ci && npm run build"
+
+[deploy]
+# Restart policy: "on_failure", "always", "never"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# Health check path (optional)
+# healthcheckPath = "/health"
+# healthcheckTimeout = 30
+
+# Custom start command (optional)
+# startCommand = "npm run start"
