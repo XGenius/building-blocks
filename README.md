@@ -8,7 +8,7 @@ Battle-tested code extracted from production applications. Copy what you need, c
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/building-blocks.git
+git clone https://github.com/XGenius/building-blocks.git
 
 # Copy a component into your project
 cp -r building-blocks/services/playwright-scraper my-project/scraper-service
