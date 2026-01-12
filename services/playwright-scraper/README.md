@@ -4,45 +4,35 @@ Self-hosted web scraper service using Playwright for high-throughput website cra
 
 ## Overview
 
-This service provides an HTTP API for scraping websites using Playwright. It's designed to replace paid scraping services like Apify, offering:
+This service provides an HTTP API for scraping websites using Playwright. It supports two modes:
 
+1. **Sync Mode** - Direct scraping, caller waits for completion (for testing/low-volume)
+2. **Queue Mode** - Async job processing with database queue (for production)
+
+Key features:
 - **Parallel page processing** - Scrape multiple pages concurrently within a single crawl
 - **Automatic sitemap discovery** - Finds sitemap.xml and robots.txt to discover all pages
-- **No concurrent limits** - Scale based on server resources
-- **Zero per-page costs** - Just server costs
-- **Low latency** - Direct scraping, no job queue
-- **Full control** - Customize crawl behavior
+- **Atomic job claiming** - FOR UPDATE SKIP LOCKED prevents race conditions with multiple workers
+- **Automatic retries** - Retriable failures (rate limits, timeouts) are requeued
+- **No per-page costs** - Just server costs
 
-## Features
+## ⚠️ Important: Never Wait for Scrapes
 
-### Parallel Crawling
+**Scripts should never block waiting for scrapes to finish.** Always use the queue mode:
 
-Pages within a single domain are scraped in parallel using multiple browser contexts:
+```typescript
+// ❌ BAD - Blocking call
+const result = await fetch('/scrape', { body: { url } });
+await processResult(result); // Script blocked for 30+ seconds
 
+// ✅ GOOD - Submit and poll
+const { id } = await fetch('/jobs', { body: { url } }).then(r => r.json());
+// Job runs in background, poll for completion or use webhook
 ```
-[Crawler] Processing batch of 5 URLs in parallel
-[Crawler] Scraped: About Us (450 words)
-[Crawler] Scraped: Products (800 words)
-[Crawler] Scraped: Contact (200 words)
-...
-```
-
-Default concurrency is 5 pages at a time, configurable up to 10.
-
-### Automatic Sitemap Discovery
-
-Before crawling, the service automatically:
-
-1. Checks `/robots.txt` for sitemap references
-2. Checks common sitemap locations (`/sitemap.xml`, `/sitemap_index.xml`)
-3. Parses sitemap index files recursively
-4. Seeds the crawl queue with discovered URLs
-
-This ensures comprehensive site coverage even for sites with poor internal linking.
 
 ## Quick Start
 
-### Local Development
+### Local Development (Sync Mode)
 
 ```bash
 npm install
@@ -57,14 +47,37 @@ curl -X POST http://localhost:3000/scrape \
   -d '{"url": "https://example.com", "maxPages": 10}'
 ```
 
-### Deploy to Railway
+### Production (Queue Mode)
 
-1. Copy this folder into your project
-2. Create a new Railway service pointing to this directory
-3. Railway will auto-detect the Dockerfile
-4. Set environment variables (see below)
+1. Set up database (run `schema.sql` in Supabase SQL editor)
+2. Set `DATABASE_URL` environment variable
+3. Deploy to Railway
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template)
+```bash
+# With DATABASE_URL set, worker mode starts automatically
+DATABASE_URL=postgres://... npm run dev
+```
+
+## Database Schema
+
+Run this in your Supabase SQL editor before using queue mode:
+
+```sql
+-- See schema.sql for full schema
+create table scrape_jobs (
+  id uuid primary key default gen_random_uuid(),
+  url text not null,
+  status text not null default 'queued', -- queued → started → completed/failed
+  max_pages int default 20,
+  result jsonb,
+  error text,
+  retry_count int default 0,
+  max_retries int default 3,
+  claimed_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz default now()
+);
+```
 
 ## API Endpoints
 
@@ -74,22 +87,31 @@ curl -X POST http://localhost:3000/scrape \
 GET /health
 ```
 
-Returns service status and metrics:
+Returns service status, mode, and queue stats:
 ```json
 {
   "status": "healthy",
-  "activeRequests": 2,
+  "mode": "queue",
+  "activeRequests": 0,
   "maxConcurrent": 32,
-  "uptime": 3600
+  "uptime": 3600,
+  "queue": {
+    "queued": 5,
+    "started": 2,
+    "completed": 150,
+    "failed": 3
+  }
 }
 ```
 
-### Scrape Single URL
+### Queue Mode Endpoints
+
+#### Submit Job (Async)
 
 ```
-POST /scrape
+POST /jobs
 Content-Type: application/json
-X-Auth-Token: your-token (optional)
+X-Auth-Token: your-token
 
 {
   "url": "https://example.com",
@@ -99,45 +121,99 @@ X-Auth-Token: your-token (optional)
 }
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `url` | string | required | URL to start crawling from |
-| `maxPages` | number | 8 | Maximum pages to scrape (up to 100) |
-| `maxConcurrency` | number | 5 | Parallel pages per crawl (up to 10) |
-| `includeSitemap` | boolean | true | Whether to discover URLs from sitemap |
-
-Response:
+Response (202 Accepted):
 ```json
 {
-  "success": true,
-  "pages": [
-    {
-      "url": "https://example.com",
-      "title": "Example Company",
-      "content": "# Example Company\n\nWe help businesses...",
-      "wordCount": 500
-    }
-  ],
-  "totalPages": 15,
-  "sitemapUrls": 45,
-  "duration": 3500
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://example.com",
+  "status": "queued",
+  "createdAt": "2024-01-15T10:30:00Z",
+  "message": "Job queued for processing"
 }
 ```
 
-### Batch Scrape
+#### Get Job Status
 
-Scrape multiple domains in parallel:
+```
+GET /jobs/:id
+X-Auth-Token: your-token
+```
+
+Response (completed):
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://example.com",
+  "status": "completed",
+  "retryCount": 0,
+  "createdAt": "2024-01-15T10:30:00Z",
+  "completedAt": "2024-01-15T10:30:45Z",
+  "result": {
+    "success": true,
+    "pages": [...],
+    "totalPages": 15,
+    "sitemapUrls": 45,
+    "duration": 12500
+  }
+}
+```
+
+Response (failed):
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://example.com",
+  "status": "failed",
+  "retryCount": 3,
+  "error": "ENOTFOUND: DNS lookup failed",
+  "createdAt": "2024-01-15T10:30:00Z",
+  "completedAt": "2024-01-15T10:31:00Z"
+}
+```
+
+#### Get Queue Stats
+
+```
+GET /jobs
+X-Auth-Token: your-token
+```
+
+```json
+{
+  "queued": 5,
+  "started": 2,
+  "completed": 150,
+  "failed": 3
+}
+```
+
+### Sync Mode Endpoints
+
+These endpoints wait for completion - use only for testing or low-volume use cases.
+
+#### Scrape (Sync)
+
+```
+POST /scrape
+Content-Type: application/json
+
+{
+  "url": "https://example.com",
+  "maxPages": 20,
+  "maxConcurrency": 5,
+  "includeSitemap": true
+}
+```
+
+#### Batch Scrape (Sync)
 
 ```
 POST /scrape/batch
 Content-Type: application/json
-X-Auth-Token: your-token (optional)
 
 {
   "urls": ["https://example1.com", "https://example2.com"],
-  "maxPages": 10,
-  "maxConcurrency": 5,
-  "includeSitemap": true
+  "maxPages": 10
 }
 ```
 
@@ -146,8 +222,166 @@ X-Auth-Token: your-token (optional)
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | 3000 |
-| `AUTH_TOKEN` | Optional auth token for requests | - |
+| `AUTH_TOKEN` | Optional auth token | - |
 | `MAX_CONCURRENT` | Max concurrent HTTP requests | 32 |
+| `DATABASE_URL` | Postgres connection string (enables queue mode) | - |
+| `QUEUE_POLL_INTERVAL` | Ms between queue polls | 5000 |
+| `QUEUE_BATCH_SIZE` | Jobs to claim per cycle | 3 |
+| `QUEUE_STUCK_TIMEOUT` | Minutes before resetting stuck jobs | 10 |
+| `QUEUE_MAX_RETRIES` | Max retries for retriable failures | 3 |
+
+## Failure Handling
+
+### Hard Failures (→ failed)
+
+These errors indicate the site cannot be scraped:
+
+- DNS lookup failed (ENOTFOUND)
+- Connection refused (ECONNREFUSED)
+- 404 Not Found
+- 403 Forbidden
+- No content extracted after retries
+
+### Retriable Failures (→ queued)
+
+These errors are temporary and jobs are requeued:
+
+- Rate limited (429)
+- Timeout
+- Server errors (500, 502, 503)
+- Browser crash
+- Out of memory
+
+Jobs are retried up to `max_retries` (default 3) before being marked as failed.
+
+## Architecture
+
+### Job Status Flow
+
+```
+┌─────────┐     ┌─────────┐     ┌───────────┐
+│ queued  │────▶│ started │────▶│ completed │
+└─────────┘     └─────────┘     └───────────┘
+     ▲               │
+     │               │ (retriable error)
+     └───────────────┘
+                     │
+                     │ (hard error or max retries)
+                     ▼
+               ┌─────────┐
+               │ failed  │
+               └─────────┘
+```
+
+### Atomic Job Claiming
+
+The service uses PostgreSQL's `FOR UPDATE SKIP LOCKED` to prevent race conditions:
+
+```sql
+UPDATE scrape_jobs
+SET status = 'started', claimed_at = NOW()
+WHERE id IN (
+  SELECT id FROM scrape_jobs
+  WHERE status = 'queued'
+  ORDER BY created_at
+  LIMIT 3
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING *
+```
+
+This ensures:
+- Only one worker claims each job
+- Workers don't block each other
+- No duplicate processing
+
+### Stuck Job Recovery
+
+Jobs stuck in 'started' state (from crashed workers) are automatically reset:
+
+- After `QUEUE_STUCK_TIMEOUT` minutes, stuck jobs are requeued
+- If already at max retries, they're marked as failed
+- Prevents jobs from being lost due to worker crashes
+
+## Client Integration
+
+### Async Pattern (Recommended)
+
+```typescript
+const SCRAPER_URL = process.env.PLAYWRIGHT_SCRAPER_URL;
+const AUTH_TOKEN = process.env.SCRAPER_AUTH_TOKEN;
+
+// Submit job
+export async function submitScrapeJob(url: string, options = {}) {
+  const response = await fetch(`${SCRAPER_URL}/jobs`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Auth-Token': AUTH_TOKEN,
+    },
+    body: JSON.stringify({ url, ...options }),
+  });
+  
+  if (!response.ok) throw new Error(`Submit failed: ${response.status}`);
+  return response.json(); // { id, status, ... }
+}
+
+// Poll for completion
+export async function waitForJob(jobId: string, timeoutMs = 120000) {
+  const start = Date.now();
+  
+  while (Date.now() - start < timeoutMs) {
+    const response = await fetch(`${SCRAPER_URL}/jobs/${jobId}`, {
+      headers: { 'X-Auth-Token': AUTH_TOKEN },
+    });
+    
+    const job = await response.json();
+    
+    if (job.status === 'completed') return job.result;
+    if (job.status === 'failed') throw new Error(job.error);
+    
+    await new Promise(r => setTimeout(r, 2000)); // Poll every 2s
+  }
+  
+  throw new Error('Job timed out');
+}
+
+// Usage in your app
+const { id } = await submitScrapeJob('https://example.com');
+// Don't await here - let it process in background
+// Later, or in a different process:
+const result = await waitForJob(id);
+```
+
+### Database Integration
+
+For tighter integration, query the `scrape_jobs` table directly:
+
+```typescript
+// In your app's database queries
+const pendingJobs = await db.query(`
+  SELECT * FROM scrape_jobs 
+  WHERE status = 'completed' 
+    AND processed_by_app = false
+  ORDER BY completed_at
+`);
+
+for (const job of pendingJobs) {
+  await processScrapedContent(job.result);
+  await db.query(`UPDATE scrape_jobs SET processed_by_app = true WHERE id = $1`, [job.id]);
+}
+```
+
+## Deploy to Railway
+
+1. Copy this folder into your project
+2. Create a new Railway service pointing to this directory
+3. Set environment variables:
+   - `DATABASE_URL` (from your Supabase project)
+   - `AUTH_TOKEN` (generate a secure token)
+4. Railway will auto-detect the Dockerfile
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template)
 
 ## Resource Requirements
 
@@ -161,130 +395,6 @@ X-Auth-Token: your-token (optional)
 | 4GB | 8-10 |
 | 8GB | 15-20 |
 | 16GB | 30-40 |
-
-## Architecture
-
-### Parallel Page Processing
-
-Each crawl uses a pool of browser contexts to scrape pages in parallel:
-
-```typescript
-// Process queue with parallel workers
-while (queue.length > 0 && pages.length < maxPages) {
-  const batch = queue.splice(0, maxConcurrency);
-  
-  const results = await Promise.all(
-    batch.map(url => scrapePage(url, context))
-  );
-  
-  // Add discovered links to queue
-  for (const result of results) {
-    queue.push(...result.links);
-  }
-}
-```
-
-### Sitemap Discovery
-
-The crawler automatically discovers URLs from sitemaps before starting the crawl:
-
-```typescript
-async function discoverSitemapUrls(baseUrl: string): Promise<string[]> {
-  // 1. Check robots.txt for Sitemap: directives
-  const robotsSitemaps = await fetchSitemapFromRobots(baseUrl);
-  
-  // 2. Parse sitemap.xml and sitemap indexes
-  const urls = await parseSitemap(sitemapUrl, baseHost);
-  
-  return urls;
-}
-```
-
-### Browser Singleton with Mutex
-
-The service uses a browser singleton pattern with a mutex to prevent race conditions:
-
-```typescript
-let browser: Browser | null = null;
-let browserLaunchPromise: Promise<Browser> | null = null;
-
-async function getBrowser(): Promise<Browser> {
-  if (browser && browser.isConnected()) return browser;
-  if (browserLaunchPromise) return browserLaunchPromise;
-  
-  browserLaunchPromise = chromium.launch({ ... });
-  browser = await browserLaunchPromise;
-  browserLaunchPromise = null;
-  return browser;
-}
-```
-
-### Resource Blocking
-
-Images, fonts, and stylesheets are blocked for faster crawling and lower memory usage:
-
-```typescript
-await page.route("**/*", (route) => {
-  const resourceType = route.request().resourceType();
-  if (["image", "media", "font", "stylesheet"].includes(resourceType)) {
-    route.abort();
-  } else {
-    route.continue();
-  }
-});
-```
-
-### Content Extraction
-
-HTML is converted to clean Markdown using Turndown, with navigation, footer, and other boilerplate elements removed.
-
-## Key Learnings & Gotchas
-
-1. **Use `--disable-dev-shm-usage`** - In Docker, `/dev/shm` is small (64MB) and Chromium needs it
-2. **Use `domcontentloaded`** not `networkidle` - Much faster, add small delay for JS rendering
-3. **Concurrent limit is critical** - Too many browsers = OOM crash
-4. **HTTPS/HTTP fallback** - Some sites only work on one protocol
-5. **Graceful shutdown** - Handle SIGTERM for Railway deploys
-6. **Sitemap parsing** - Handle both regular sitemaps and sitemap indexes recursively
-
-## Client Integration
-
-Example client code for calling from your main app:
-
-```typescript
-const SCRAPER_URL = process.env.PLAYWRIGHT_SCRAPER_URL;
-const AUTH_TOKEN = process.env.SCRAPER_AUTH_TOKEN;
-
-export async function scrapeWebsite(
-  url: string, 
-  options: { 
-    maxPages?: number; 
-    maxConcurrency?: number;
-    includeSitemap?: boolean;
-  } = {}
-) {
-  const response = await fetch(`${SCRAPER_URL}/scrape`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(AUTH_TOKEN && { 'X-Auth-Token': AUTH_TOKEN }),
-    },
-    body: JSON.stringify({ 
-      url, 
-      maxPages: options.maxPages ?? 20,
-      maxConcurrency: options.maxConcurrency ?? 5,
-      includeSitemap: options.includeSitemap ?? true,
-    }),
-    signal: AbortSignal.timeout(120000), // 2 min timeout for larger crawls
-  });
-  
-  if (!response.ok) {
-    throw new Error(`Scrape failed: ${response.status}`);
-  }
-  
-  return response.json();
-}
-```
 
 ## License
 
