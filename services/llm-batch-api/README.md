@@ -48,6 +48,10 @@ Background process that:
 
 ### 3. Model Endpoints (RunPod Serverless)
 
+**Docker Image:** `runpod/worker-v1-vllm:v2.11.1`
+
+> ⚠️ **Important:** Use this exact image. Other vLLM images may fail to initialize on RunPod Serverless.
+
 | Model | GPU | Use Case |
 |-------|-----|----------|
 | Mistral 7B | RTX 4090 | Fast, cheap - subject lines, email drafts |

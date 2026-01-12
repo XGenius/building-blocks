@@ -37,9 +37,14 @@ RunPod Serverless supports multi-GPU workers. Configure via endpoint settings af
 ### Runtime
 
 - **vLLM** for both Mistral and Llama (required for efficient batching)
-- Use RunPod's **vLLM Quick Deploy template** as base
+- Use RunPod's **vLLM worker image**: `runpod/worker-v1-vllm:v2.11.1`
 - Enable **FlashBoot** for sub-second cold starts on Mistral
 - Enable **Network Volumes** to avoid model re-download on worker spin-up
+
+**IMPORTANT:** The exact Docker image is critical. Other vLLM images may fail to initialize on RunPod Serverless. Always use:
+```
+runpod/worker-v1-vllm:v2.11.1
+```
 
 ---
 
@@ -581,14 +586,16 @@ services:
 
 ### Mistral Container
 
-**Use RunPod's vLLM Quick Deploy template.** Do not build a custom container unless necessary.
+**Use RunPod's vLLM worker image.** Do not build a custom container unless necessary.
+
+**Docker Image:** `runpod/worker-v1-vllm:v2.11.1`
 
 **Serverless Endpoint Configuration (`runpod-mistral-endpoint.json`):**
 
 ```json
 {
   "name": "socialbloom-mistral-7b",
-  "template": "vllm",
+  "dockerImage": "runpod/worker-v1-vllm:v2.11.1",
   "gpuType": "NVIDIA RTX 4090",
   "gpuCount": 1,
   "volumeSize": 50,
@@ -611,12 +618,14 @@ services:
 
 **CRITICAL: Must configure for 2-GPU tensor parallelism.**
 
+**Docker Image:** `runpod/worker-v1-vllm:v2.11.1`
+
 **Serverless Endpoint Configuration (`runpod-llama-endpoint.json`):**
 
 ```json
 {
   "name": "socialbloom-llama70b",
-  "template": "vllm",
+  "dockerImage": "runpod/worker-v1-vllm:v2.11.1",
   "gpuType": "NVIDIA A100 80GB SXM",
   "gpuCount": 2,
   "volumeSize": 200,
@@ -857,7 +866,7 @@ async function submitBatch(stage: string, requests: any[]) {
 ### Step 2: Deploy Mistral Serverless Endpoint
 
 1. Go to RunPod Console → Serverless → New Endpoint
-2. Select "vLLM" template
+2. Select "Custom" and enter Docker image: `runpod/worker-v1-vllm:v2.11.1`
 3. Configure:
    - GPU: RTX 4090 (24GB)
    - GPU Count: 1
@@ -878,7 +887,7 @@ async function submitBatch(stage: string, requests: any[]) {
 ### Step 3: Deploy Llama-3 70B Serverless Endpoint
 
 1. Go to RunPod Console → Serverless → New Endpoint
-2. Select "vLLM" template
+2. Select "Custom" and enter Docker image: `runpod/worker-v1-vllm:v2.11.1`
 3. Configure:
    - GPU: A100 80GB SXM
    - **GPU Count: 2** (CRITICAL)
