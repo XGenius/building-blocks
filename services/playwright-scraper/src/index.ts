@@ -35,7 +35,12 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
 
 // Scrape endpoint
 app.post("/scrape", authMiddleware, async (req: Request, res: Response) => {
-  const { url, maxPages = 8 } = req.body;
+  const { 
+    url, 
+    maxPages = 8,
+    maxConcurrency = 5,
+    includeSitemap = true,
+  } = req.body;
 
   if (!url) {
     res.status(400).json({ error: "URL is required" });
@@ -56,7 +61,10 @@ app.post("/scrape", authMiddleware, async (req: Request, res: Response) => {
   console.log(`[Server] Starting scrape for ${url} (${activeRequests}/${MAX_CONCURRENT} active)`);
 
   try {
-    const result: CrawlResult = await crawlWebsite(url, Math.min(maxPages, 20));
+    const result: CrawlResult = await crawlWebsite(url, Math.min(maxPages, 100), {
+      maxConcurrency: Math.min(maxConcurrency, 10),
+      includeSitemap,
+    });
 
     console.log(
       `[Server] Completed scrape for ${url}: ${result.totalPages} pages in ${result.duration}ms`
@@ -78,9 +86,14 @@ app.post("/scrape", authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-// Batch scrape endpoint (for parallel processing)
+// Batch scrape endpoint (for parallel processing of multiple domains)
 app.post("/scrape/batch", authMiddleware, async (req: Request, res: Response) => {
-  const { urls, maxPages = 8 } = req.body;
+  const { 
+    urls, 
+    maxPages = 8,
+    maxConcurrency = 5,
+    includeSitemap = true,
+  } = req.body;
 
   if (!Array.isArray(urls) || urls.length === 0) {
     res.status(400).json({ error: "URLs array is required" });
@@ -93,7 +106,10 @@ app.post("/scrape/batch", authMiddleware, async (req: Request, res: Response) =>
   console.log(`[Server] Starting batch scrape for ${limitedUrls.length} URLs`);
 
   const results = await Promise.allSettled(
-    limitedUrls.map((url: string) => crawlWebsite(url, Math.min(maxPages, 20)))
+    limitedUrls.map((url: string) => crawlWebsite(url, Math.min(maxPages, 100), {
+      maxConcurrency: Math.min(maxConcurrency, 10),
+      includeSitemap,
+    }))
   );
 
   const response = results.map((result, index) => ({

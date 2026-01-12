@@ -1,4 +1,4 @@
-import { chromium, Browser, Page } from "playwright";
+import { chromium, Browser, BrowserContext, Page } from "playwright";
 import TurndownService from "turndown";
 import * as cheerio from "cheerio";
 
@@ -15,7 +15,14 @@ export interface CrawlResult {
   pages: CrawlPage[];
   totalPages: number;
   duration: number;
+  sitemapUrls?: number; // How many URLs found via sitemap
   error?: string;
+}
+
+interface CrawlOptions {
+  maxPages?: number;
+  maxConcurrency?: number;
+  includeSitemap?: boolean;
 }
 
 // Turndown service for HTML to Markdown conversion
@@ -153,43 +160,184 @@ function extractInternalLinks(html: string, baseUrl: string): string[] {
 }
 
 /**
- * Crawl a website starting from the given URL
+ * Normalize a URL for consistent comparison
  */
-export async function crawlWebsite(
-  startUrl: string,
-  maxPages: number = 8
-): Promise<CrawlResult> {
-  const startTime = Date.now();
-  const pages: CrawlPage[] = [];
-  const visited: Set<string> = new Set();
-  const queue: string[] = [];
-
-  // Normalize start URL - we'll try https first, then http if that fails
-  let normalizedStartUrl = startUrl.trim();
-  const hasExplicitProtocol = normalizedStartUrl.startsWith("http://") || normalizedStartUrl.startsWith("https://");
-  
-  if (!hasExplicitProtocol) {
-    normalizedStartUrl = `https://${normalizedStartUrl}`;
-  }
-  normalizedStartUrl = normalizedStartUrl.replace(/\/$/, "");
-
-  // Track if we should try HTTP fallback
-  let shouldTryHttpFallback = !hasExplicitProtocol || normalizedStartUrl.startsWith("https://");
-  const baseDomain = normalizedStartUrl.replace(/^https?:\/\//, "");
-
-  queue.push(normalizedStartUrl);
-
-  let browserInstance: Browser;
-  let page: Page;
-
+function normalizeUrl(url: string, baseUrl?: string): string | null {
   try {
-    browserInstance = await getBrowser();
-    page = await browserInstance.newPage();
+    const parsed = baseUrl ? new URL(url, baseUrl) : new URL(url);
+    let normalized = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    return normalized.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
 
-    // Set reasonable timeout and viewport
-    page.setDefaultTimeout(30000);
-    await page.setViewportSize({ width: 1280, height: 720 });
+/**
+ * Fetch sitemap URLs from robots.txt
+ */
+async function fetchSitemapFromRobots(baseUrl: string, context: BrowserContext): Promise<string[]> {
+  const sitemapUrls: string[] = [];
+  const page = await context.newPage();
+  
+  try {
+    const robotsUrl = `${baseUrl}/robots.txt`;
+    console.log(`[Crawler] Checking robots.txt: ${robotsUrl}`);
+    
+    const response = await page.goto(robotsUrl, { 
+      waitUntil: "domcontentloaded",
+      timeout: 10000 
+    });
+    
+    if (response?.ok()) {
+      const text = await page.evaluate(() => document.body.innerText);
+      const lines = text.split("\n");
+      
+      for (const line of lines) {
+        const match = line.match(/^sitemap:\s*(.+)$/i);
+        if (match) {
+          const sitemapUrl = match[1].trim();
+          console.log(`[Crawler] Found sitemap in robots.txt: ${sitemapUrl}`);
+          sitemapUrls.push(sitemapUrl);
+        }
+      }
+    }
+  } catch (error) {
+    console.log(`[Crawler] Could not fetch robots.txt: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  } finally {
+    await page.close();
+  }
+  
+  return sitemapUrls;
+}
 
+/**
+ * Parse a sitemap XML and extract URLs
+ */
+async function parseSitemap(sitemapUrl: string, context: BrowserContext, baseHost: string, depth = 0): Promise<string[]> {
+  if (depth > 3) {
+    console.log(`[Crawler] Max sitemap depth reached, stopping recursion`);
+    return [];
+  }
+  
+  const urls: string[] = [];
+  const page = await context.newPage();
+  
+  try {
+    console.log(`[Crawler] Fetching sitemap: ${sitemapUrl}`);
+    
+    const response = await page.goto(sitemapUrl, { 
+      waitUntil: "domcontentloaded",
+      timeout: 15000 
+    });
+    
+    if (!response?.ok()) {
+      console.log(`[Crawler] Sitemap not found or error: ${sitemapUrl}`);
+      return [];
+    }
+    
+    const content = await page.content();
+    const $ = cheerio.load(content, { xmlMode: true });
+    
+    // Check for sitemap index (contains other sitemaps)
+    const sitemapLocs = $("sitemap > loc");
+    if (sitemapLocs.length > 0) {
+      console.log(`[Crawler] Found sitemap index with ${sitemapLocs.length} sitemaps`);
+      
+      // Recursively parse each sitemap (limit to first 10 sitemaps)
+      const nestedSitemaps: string[] = [];
+      sitemapLocs.slice(0, 10).each((_, el) => {
+        const loc = $(el).text().trim();
+        if (loc) nestedSitemaps.push(loc);
+      });
+      
+      await page.close();
+      
+      // Fetch nested sitemaps in parallel (max 3 at a time)
+      const chunks = [];
+      for (let i = 0; i < nestedSitemaps.length; i += 3) {
+        chunks.push(nestedSitemaps.slice(i, i + 3));
+      }
+      
+      for (const chunk of chunks) {
+        const results = await Promise.all(
+          chunk.map(sm => parseSitemap(sm, context, baseHost, depth + 1))
+        );
+        urls.push(...results.flat());
+      }
+      
+      return urls;
+    }
+    
+    // Regular sitemap with URLs
+    $("url > loc").each((_, el) => {
+      const loc = $(el).text().trim();
+      if (loc) {
+        try {
+          const parsedUrl = new URL(loc);
+          // Only include same-domain URLs
+          if (parsedUrl.host === baseHost) {
+            const normalized = normalizeUrl(loc);
+            if (normalized) urls.push(normalized);
+          }
+        } catch {
+          // Invalid URL, skip
+        }
+      }
+    });
+    
+    console.log(`[Crawler] Found ${urls.length} URLs in sitemap`);
+  } catch (error) {
+    console.log(`[Crawler] Error parsing sitemap ${sitemapUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  } finally {
+    if (!page.isClosed()) await page.close();
+  }
+  
+  return urls;
+}
+
+/**
+ * Discover all sitemap URLs for a domain
+ */
+async function discoverSitemapUrls(baseUrl: string, context: BrowserContext): Promise<string[]> {
+  const baseHost = new URL(baseUrl).host;
+  const allUrls: Set<string> = new Set();
+  
+  // Common sitemap locations to check
+  const defaultSitemaps = [
+    `${baseUrl}/sitemap.xml`,
+    `${baseUrl}/sitemap_index.xml`,
+    `${baseUrl}/sitemap-index.xml`,
+  ];
+  
+  // Get sitemap URLs from robots.txt
+  const robotsSitemaps = await fetchSitemapFromRobots(baseUrl, context);
+  const sitemapsToCheck = [...new Set([...robotsSitemaps, ...defaultSitemaps])];
+  
+  // Parse each sitemap
+  for (const sitemapUrl of sitemapsToCheck) {
+    const urls = await parseSitemap(sitemapUrl, context, baseHost);
+    urls.forEach(url => allUrls.add(url));
+    
+    // If we found URLs, we can stop checking default locations
+    if (allUrls.size > 0 && robotsSitemaps.includes(sitemapUrl)) {
+      break;
+    }
+  }
+  
+  console.log(`[Crawler] Total URLs discovered from sitemaps: ${allUrls.size}`);
+  return Array.from(allUrls);
+}
+
+/**
+ * Scrape a single page
+ */
+async function scrapePage(
+  url: string,
+  context: BrowserContext
+): Promise<{ page: CrawlPage; links: string[] } | null> {
+  const page = await context.newPage();
+  
+  try {
     // Block unnecessary resources for faster loading
     await page.route("**/*", (route) => {
       const resourceType = route.request().resourceType();
@@ -200,97 +348,193 @@ export async function crawlWebsite(
       }
     });
 
-    while (queue.length > 0 && pages.length < maxPages) {
-      const currentUrl = queue.shift()!;
-
-      // Skip if already visited
-      if (visited.has(currentUrl)) continue;
-      visited.add(currentUrl);
-
-      try {
-        console.log(`[Crawler] Crawling: ${currentUrl}`);
-
-        // Navigate to page
-        const response = await page.goto(currentUrl, {
+    console.log(`[Crawler] Scraping: ${url}`);
+    
+    const response = await page.goto(url, {
           waitUntil: "domcontentloaded",
           timeout: 30000,
         });
 
-        // Check for non-HTML or error responses - try HTTP fallback
+    // Check for non-HTML or error responses
         const contentType = response?.headers()["content-type"] || "";
         const statusCode = response?.status() || 0;
         
         if (!contentType.includes("text/html") || statusCode >= 400) {
-          console.log(`[Crawler] Non-HTML or error (${statusCode}): ${currentUrl}`);
-          
-          // Try HTTP fallback if HTTPS returned error
-          if (shouldTryHttpFallback && currentUrl.startsWith("https://") && pages.length === 0) {
-            const httpUrl = currentUrl.replace("https://", "http://");
-            if (!visited.has(httpUrl)) {
-              console.log(`[Crawler] Trying HTTP fallback: ${httpUrl}`);
-              queue.unshift(httpUrl);
-              shouldTryHttpFallback = false;
-            }
-          }
-          continue;
+      console.log(`[Crawler] Non-HTML or error (${statusCode}): ${url}`);
+      return null;
         }
 
         // Wait a bit for dynamic content
-        await page.waitForTimeout(1000);
+    await page.waitForTimeout(500);
 
         // Get HTML content
         const html = await page.content();
 
         // Extract content
         const { content, title } = extractContent(html);
+    const wordCount = content.split(/\s+/).length;
+    
+    // Extract links for further crawling
+    const links = extractInternalLinks(html, url);
+    
+    console.log(`[Crawler] Scraped: ${title} (${wordCount} words, ${links.length} links)`);
+    
+    return {
+      page: { url, title, content, wordCount },
+      links,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Crawler] Error scraping ${url}:`, errorMsg);
+    return null;
+  } finally {
+    await page.close();
+  }
+}
 
-        // Track word count but don't skip - even low-content pages may be useful
-        const wordCount = content.split(/\s+/).length;
-        if (wordCount < 10) {
-          console.log(`[Crawler] Very low content (${wordCount} words): ${currentUrl}`);
-          // Still include it - better than nothing
+/**
+ * Simple concurrency pool for parallel execution
+ */
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  const queue = [...items];
+  const running: Promise<void>[] = [];
+  
+  async function runNext(): Promise<void> {
+    if (queue.length === 0) return;
+    
+    const item = queue.shift()!;
+    await fn(item);
+    await runNext();
+  }
+  
+  // Start initial batch
+  for (let i = 0; i < Math.min(concurrency, items.length); i++) {
+    running.push(runNext());
+  }
+  
+  await Promise.all(running);
+}
+
+/**
+ * Crawl a website starting from the given URL with parallel processing
+ */
+export async function crawlWebsite(
+  startUrl: string,
+  maxPages: number = 8,
+  options: CrawlOptions = {}
+): Promise<CrawlResult> {
+  const {
+    maxConcurrency = 5,
+    includeSitemap = true,
+  } = options;
+  
+  const startTime = Date.now();
+  const pages: CrawlPage[] = [];
+  const visited: Set<string> = new Set();
+  const queue: string[] = [];
+  let sitemapUrlCount = 0;
+
+  // Normalize start URL
+  let normalizedStartUrl = startUrl.trim();
+  const hasExplicitProtocol = normalizedStartUrl.startsWith("http://") || normalizedStartUrl.startsWith("https://");
+  
+  if (!hasExplicitProtocol) {
+    normalizedStartUrl = `https://${normalizedStartUrl}`;
+  }
+  normalizedStartUrl = normalizedStartUrl.replace(/\/$/, "");
+  
+  // Extract base URL (protocol + host)
+  const parsedUrl = new URL(normalizedStartUrl);
+  const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
+
+  let browserInstance: Browser;
+  let context: BrowserContext;
+
+  try {
+    browserInstance = await getBrowser();
+    context = await browserInstance.newContext({
+      viewport: { width: 1280, height: 720 },
+      userAgent: "Mozilla/5.0 (compatible; BuildingBlocksCrawler/1.0)",
+    });
+
+    // Discover sitemap URLs first
+    if (includeSitemap) {
+      const sitemapUrls = await discoverSitemapUrls(baseUrl, context);
+      sitemapUrlCount = sitemapUrls.length;
+      
+      // Add sitemap URLs to queue (prioritize start URL)
+      for (const url of sitemapUrls) {
+        if (!queue.includes(url)) {
+          queue.push(url);
         }
-
-        pages.push({
-          url: currentUrl,
-          title,
-          content,
-          wordCount,
-        });
-
-        console.log(`[Crawler] Scraped: ${title} (${wordCount} words)`);
-
-        // Extract links for further crawling
-        const links = extractInternalLinks(html, currentUrl);
-        for (const link of links) {
-          if (!visited.has(link) && !queue.includes(link)) {
-            queue.push(link);
-          }
-        }
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : "Unknown error";
-        console.error(`[Crawler] Error crawling ${currentUrl}:`, errorMsg);
-        
-        // If HTTPS failed and we haven't tried HTTP yet, add HTTP version to queue
-        if (shouldTryHttpFallback && currentUrl.startsWith("https://") && pages.length === 0) {
-          const httpUrl = currentUrl.replace("https://", "http://");
-          if (!visited.has(httpUrl)) {
-            console.log(`[Crawler] HTTPS failed, trying HTTP fallback: ${httpUrl}`);
-            queue.unshift(httpUrl); // Add to front of queue
-            shouldTryHttpFallback = false; // Only try once
-          }
-        }
-        // Continue with next URL
+      }
+    }
+    
+    // Ensure start URL is at the front
+    if (!queue.includes(normalizedStartUrl)) {
+      queue.unshift(normalizedStartUrl);
+    } else {
+      // Move to front if already in queue
+      const idx = queue.indexOf(normalizedStartUrl);
+      if (idx > 0) {
+        queue.splice(idx, 1);
+        queue.unshift(normalizedStartUrl);
       }
     }
 
-    await page.close();
+    console.log(`[Crawler] Starting parallel crawl with concurrency=${maxConcurrency}, maxPages=${maxPages}`);
+    console.log(`[Crawler] Queue initialized with ${queue.length} URLs`);
+
+    // Process queue with parallel workers
+    while (queue.length > 0 && pages.length < maxPages) {
+      // Take a batch from the queue
+      const batchSize = Math.min(maxConcurrency, maxPages - pages.length, queue.length);
+      const batch: string[] = [];
+      
+      while (batch.length < batchSize && queue.length > 0) {
+        const url = queue.shift()!;
+        if (!visited.has(url)) {
+          visited.add(url);
+          batch.push(url);
+        }
+      }
+      
+      if (batch.length === 0) break;
+      
+      console.log(`[Crawler] Processing batch of ${batch.length} URLs in parallel`);
+      
+      // Scrape batch in parallel
+      const results = await Promise.all(
+        batch.map(url => scrapePage(url, context))
+      );
+      
+      // Process results
+      for (const result of results) {
+        if (result && pages.length < maxPages) {
+          pages.push(result.page);
+          
+          // Add new links to queue
+          for (const link of result.links) {
+          if (!visited.has(link) && !queue.includes(link)) {
+            queue.push(link);
+          }
+          }
+        }
+      }
+    }
+
+    await context.close();
 
     return {
-      success: pages.length > 0, // Only success if we got at least one page
+      success: pages.length > 0,
       pages,
       totalPages: pages.length,
       duration: Date.now() - startTime,
+      sitemapUrls: sitemapUrlCount,
       error: pages.length === 0 ? "No content could be extracted from any pages" : undefined,
     };
   } catch (error) {
@@ -315,4 +559,3 @@ export async function closeBrowser(): Promise<void> {
     browser = null;
   }
 }
-
