@@ -2,6 +2,30 @@
 
 A properly configured Anthropic client with increased timeouts, retries, and best practices for production use.
 
+## Prerequisites
+
+- [ ] Anthropic account with API access
+- [ ] Node.js/TypeScript application
+
+## Human Setup Steps
+
+1. **Create Anthropic account**
+   - Sign up at [console.anthropic.com](https://console.anthropic.com)
+   - Add payment method (required for API access)
+
+2. **Generate API key**
+   - Go to API Keys in the Anthropic console
+   - Create a new key and copy it immediately (only shown once)
+
+3. **Install the SDK**
+   ```bash
+   npm install @anthropic-ai/sdk
+   ```
+
+4. **Copy the client** into your project
+
+5. **Set environment variable**
+
 ## The Problem
 
 Default Anthropic SDK settings can cause issues in production:

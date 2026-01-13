@@ -2,6 +2,41 @@
 
 A consistent pattern for calling external APIs with rate limiting, batching, retries, and error handling.
 
+## Prerequisites
+
+- [ ] API key/credentials from the external service
+- [ ] Node.js/TypeScript application
+
+## Human Setup Steps
+
+1. **Get API credentials** from your external service
+   - Create account with the service provider
+   - Generate API key from their dashboard
+   - Note any rate limits documented in their API docs
+
+2. **Copy the pattern** into your project
+
+3. **Configure rate limits** based on the provider's documentation
+
+4. **Set environment variables**
+
+## Environment Variables
+
+Varies by service - add variables for each API you integrate:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `{SERVICE}_API_KEY` | Yes | API key for the service |
+| `{SERVICE}_BASE_URL` | No | API base URL (if not hardcoded) |
+
+```bash
+# Example .env
+STRIPE_API_KEY=sk_live_xxx
+SENDGRID_API_KEY=SG.xxx
+HUBSPOT_API_KEY=pat-xxx
+INSTANTLY_API_KEY=xxx
+```
+
 ## The Problem
 
 External APIs have rate limits. Without proper handling:

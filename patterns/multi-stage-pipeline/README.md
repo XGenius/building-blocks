@@ -2,6 +2,33 @@
 
 Async, fire-and-forget entity processing with multiple stages. Eliminates synchronous waiting and timeouts by using database-driven status fields and job tracking.
 
+## Prerequisites
+
+- [ ] PostgreSQL database (Supabase recommended)
+- [ ] External services deployed (playwright-scraper, llm-batch-api)
+- [ ] Node.js/TypeScript application
+
+## Human Setup Steps
+
+1. **Set up Supabase project**
+   - Create project at [supabase.com](https://supabase.com)
+   - Go to Settings → Database → Connection string
+   - Copy the connection string for `DATABASE_URL`
+
+2. **Run the schema migration**
+   - Open Supabase SQL Editor
+   - Paste contents of `schema.sql`
+   - Run the query
+
+3. **Deploy external services**
+   - Deploy [playwright-scraper](../../services/playwright-scraper/) to Railway
+   - Deploy [llm-batch-api](../../services/llm-batch-api/) to RunPod
+   - Note the URLs for each service
+
+4. **Configure environment variables**
+
+5. **Start workers** in your application
+
 ## The Problem
 
 Synchronous processing causes timeouts and blocks scripts:
@@ -318,17 +345,26 @@ WHERE scrape_status = 'started'
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | required |
-| `SCRAPER_URL` | Playwright scraper service URL | http://localhost:3000 |
-| `SCRAPER_AUTH_TOKEN` | Auth token for scraper | - |
-| `LLM_URL` | LLM batch API URL | http://localhost:8000 |
-| `LLM_AUTH_TOKEN` | Auth token for LLM | - |
-| `QUEUE_BATCH_SIZE` | Entities to claim per cycle | 5 |
-| `QUEUE_POLL_INTERVAL` | Ms between worker polls | 500 |
-| `COMPLETION_POLL_INTERVAL` | Ms between completion checks | 2000 |
-| `WEBHOOK_SECRET` | HMAC secret for webhook validation | - |
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `DATABASE_URL` | **Yes** | PostgreSQL connection string | - |
+| `SCRAPER_URL` | **Yes** | Playwright scraper service URL | http://localhost:3000 |
+| `SCRAPER_AUTH_TOKEN` | No | Auth token for scraper | - |
+| `LLM_URL` | **Yes** | LLM batch API URL | http://localhost:8000 |
+| `LLM_AUTH_TOKEN` | No | Auth token for LLM | - |
+| `QUEUE_BATCH_SIZE` | No | Entities to claim per cycle | 5 |
+| `QUEUE_POLL_INTERVAL` | No | Ms between worker polls | 500 |
+| `COMPLETION_POLL_INTERVAL` | No | Ms between completion checks | 2000 |
+| `WEBHOOK_SECRET` | No | HMAC secret for webhook validation | - |
+
+```bash
+# Example .env
+DATABASE_URL=postgresql://postgres:password@db.xxx.supabase.co:5432/postgres
+SCRAPER_URL=https://playwright-scraper-production.up.railway.app
+SCRAPER_AUTH_TOKEN=your-scraper-token
+LLM_URL=https://api.runpod.ai/v2/your-endpoint
+LLM_AUTH_TOKEN=your-runpod-token
+```
 
 ## Example: Lead Customization Pipeline
 

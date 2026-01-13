@@ -2,6 +2,90 @@
 
 A self-hosted LLM inference service using RunPod, designed as a drop-in replacement for Anthropic's Batch API.
 
+## Prerequisites
+
+- [ ] RunPod account with API access
+- [ ] HuggingFace account with Llama-3 access (requires Meta approval)
+- [ ] Redis instance (Upstash or self-hosted)
+- [ ] Docker Hub account (for custom containers)
+
+## Human Setup Steps
+
+### 1. Set Up RunPod Account
+
+1. **Create account** at [runpod.io](https://runpod.io)
+2. **Add credits** - GPU usage is pay-as-you-go
+3. **Get API key** - Account → API Keys
+
+### 2. Get HuggingFace Access
+
+1. **Create account** at [huggingface.co](https://huggingface.co)
+2. **Request Llama-3 access** at [meta-llama/Meta-Llama-3-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-70B-Instruct)
+   - Fill out Meta's form
+   - Wait for approval (usually 1-2 days)
+3. **Create access token** - Settings → Access Tokens
+
+### 3. Set Up Redis
+
+**Option A: Upstash (Recommended)**
+1. Create account at [upstash.com](https://upstash.com)
+2. Create Redis database
+3. Copy the connection string
+
+**Option B: Self-hosted on RunPod**
+1. Deploy Redis pod on RunPod
+2. Note the internal URL
+
+### 4. Create Network Volume
+
+1. RunPod Console → Storage → Create Network Volume
+2. Size: 300GB minimum (for model weights)
+3. Region: Same as your GPU endpoints
+4. Note the volume ID
+
+### 5. Deploy Model Endpoints
+
+See `FULL_SPEC.md` for detailed endpoint configuration.
+
+**Docker Image (Critical):** `runpod/worker-v1-vllm:v2.11.1`
+
+### 6. Deploy Batch API
+
+1. Build and push the batch-api container
+2. Deploy as RunPod serverless endpoint
+3. Note the endpoint URL
+
+## Environment Variables
+
+### Batch API Service
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `REDIS_URL` | **Yes** | Redis connection string |
+| `MISTRAL_BASE_URL` | **Yes** | RunPod Mistral endpoint URL |
+| `LLAMA_BASE_URL` | **Yes** | RunPod Llama endpoint URL |
+| `PORT` | No | API port (default: 8000) |
+
+### Worker Service
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `REDIS_URL` | **Yes** | Redis connection string |
+| `MISTRAL_BASE_URL` | **Yes** | RunPod Mistral endpoint URL |
+| `LLAMA_BASE_URL` | **Yes** | RunPod Llama endpoint URL |
+| `WORKER_CONCURRENCY` | No | Parallel requests per worker (default: 8) |
+
+### Your Node.js App
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `LOCAL_BATCH_URL` | **Yes** | Batch API base URL |
+
+```bash
+# Example .env for your app
+LOCAL_BATCH_URL=https://api.runpod.ai/v2/your-batch-endpoint
+```
+
 ## Overview
 
 This service allows you to:

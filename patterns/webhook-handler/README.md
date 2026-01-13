@@ -2,6 +2,52 @@
 
 A multi-provider webhook handling pattern with atomic claiming, idempotency, and type-based routing.
 
+## Prerequisites
+
+- [ ] PostgreSQL database (Supabase recommended)
+- [ ] Express.js application
+- [ ] Public URL for receiving webhooks (use ngrok for local development)
+
+## Human Setup Steps
+
+1. **Set up your database**
+   - Create a Supabase project at [supabase.com](https://supabase.com)
+   - Get your `DATABASE_URL` from Settings → Database → Connection string
+
+2. **Run the schema migration**
+   - Copy `schema.sql` to your migrations folder
+   - Run via Supabase SQL Editor or `npm run db:migrate`
+
+3. **Configure webhook endpoints in external services**
+   - Stripe: Dashboard → Developers → Webhooks → Add endpoint
+   - SendGrid: Settings → Mail Settings → Event Notification
+   - Each provider has different setup steps
+
+4. **Set up public URL for development**
+   ```bash
+   # Use ngrok to expose local server
+   ngrok http 5001
+   # Copy the https URL and use it as your webhook endpoint
+   ```
+
+5. **Configure webhook secrets** (optional but recommended)
+   - Get signing secret from each provider
+   - Add to your environment variables
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `STRIPE_WEBHOOK_SECRET` | No | Stripe webhook signing secret |
+| `SENDGRID_WEBHOOK_KEY` | No | SendGrid webhook verification key |
+
+```bash
+# Example .env
+DATABASE_URL=postgresql://postgres:password@db.xxx.supabase.co:5432/postgres
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+```
+
 ## The Problem
 
 When receiving webhooks from multiple providers:

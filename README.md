@@ -34,6 +34,7 @@ Copy-and-adapt code patterns for common problems.
 
 | Pattern | Problem Solved | Language |
 |---------|---------------|----------|
+| [Multi-Stage Pipeline](./patterns/multi-stage-pipeline/) | Async entity processing, no timeouts | TypeScript |
 | [Atomic Job Processor](./patterns/atomic-job-processor/) | Race conditions in background jobs | TypeScript |
 | [Rate-Limited API Client](./patterns/rate-limited-api-client/) | API rate limits & retries | TypeScript |
 | [Webhook Handler](./patterns/webhook-handler/) | Multi-provider webhook processing | TypeScript |
@@ -59,14 +60,20 @@ Configuration files for common tools.
 
 ## How to Use
 
+Each component README includes:
+- **Prerequisites** - What accounts/services you need
+- **Human Setup Steps** - Step-by-step manual configuration
+- **Environment Variables** - Required and optional variables with examples
+
 ### Services
 
 Services are standalone and deploy separately from your main app.
 
-1. **Copy the folder** into your project
-2. **Configure environment variables** (see service README)
-3. **Deploy to Railway** as a separate service
-4. **Connect via internal URL** (e.g., `https://scraper.railway.internal`)
+1. **Review the README** for prerequisites and setup steps
+2. **Copy the folder** into your project
+3. **Configure environment variables** (see service README)
+4. **Deploy to Railway** as a separate service
+5. **Connect via internal URL** (e.g., `https://scraper.railway.internal`)
 
 ```bash
 # Example: Add Playwright scraper to your project
@@ -189,6 +196,32 @@ Handle webhooks from multiple providers with atomic claiming and type-based rout
 - Status tracking (received → processing → processed/error)
 
 [Read more →](./patterns/webhook-handler/)
+
+---
+
+### Multi-Stage Pipeline
+
+Async, fire-and-forget entity processing with database-driven status fields. Eliminates synchronous waiting and timeouts.
+
+**Key Principle:** Never block scripts waiting for external services.
+
+```typescript
+// ❌ BAD - Script blocks for 30+ seconds
+const result = await fetch('/scrape', { body: { url } });
+
+// ✅ GOOD - Returns immediately
+await db.update(leads).set({ scrape_status: 'queued' });
+// Workers handle everything async
+```
+
+**Features:**
+- Status flow: `pending → queued → started → completed/failed`
+- FOR UPDATE SKIP LOCKED for atomic claiming
+- Stage completion triggers next stage automatically
+- Both polling and webhook completion detection
+- Hard vs retriable failure classification
+
+[Read more →](./patterns/multi-stage-pipeline/)
 
 ---
 

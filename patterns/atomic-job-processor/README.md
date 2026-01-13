@@ -2,6 +2,35 @@
 
 A race-condition-safe pattern for processing queued jobs when multiple server instances run simultaneously.
 
+## Prerequisites
+
+- [ ] PostgreSQL database (Supabase, Railway, or self-hosted)
+- [ ] Node.js application with database connection
+
+## Human Setup Steps
+
+1. **Set up your database** (if not already done)
+   - Create a Supabase project at [supabase.com](https://supabase.com), OR
+   - Use Railway's PostgreSQL add-on, OR
+   - Any PostgreSQL instance
+
+2. **Run the migration** (see Database Requirements section below)
+
+3. **Copy the pattern** into your project
+
+4. **Configure environment variables**
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+
+```bash
+# Example .env
+DATABASE_URL=postgresql://postgres:password@db.xxx.supabase.co:5432/postgres
+```
+
 ## The Problem
 
 When you have multiple server instances (dev + prod, multiple Railway replicas, etc.) running the same job processor:

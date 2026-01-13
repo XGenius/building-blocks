@@ -2,6 +2,59 @@
 
 Self-hosted web scraper service using Playwright for high-throughput website crawling.
 
+## Prerequisites
+
+- [ ] Railway account (or Docker-compatible hosting)
+- [ ] PostgreSQL database (only for queue mode)
+
+## Human Setup Steps
+
+### Option A: Deploy to Railway (Recommended)
+
+1. **Create Railway account** at [railway.app](https://railway.app)
+
+2. **Create new project** from GitHub repo or template
+
+3. **Add environment variables** in Railway dashboard:
+   - `AUTH_TOKEN` - Generate a secure token for API auth
+   - `DATABASE_URL` - (Only for queue mode) Your Supabase connection string
+
+4. **Deploy** - Railway auto-detects the Dockerfile
+
+5. **Get your service URL** from Railway dashboard
+
+### Option B: Run Locally
+
+1. **Install dependencies**
+   ```bash
+   cd services/playwright-scraper
+   npm install
+   npx playwright install chromium
+   ```
+
+2. **Set environment variables**
+   ```bash
+   cp .env.example .env  # Create from example if exists
+   # Edit .env with your values
+   ```
+
+3. **Start the service**
+   ```bash
+   npm run dev
+   ```
+
+### Setting Up Queue Mode
+
+1. **Create the database table** in Supabase SQL Editor:
+   - Open Supabase Dashboard → SQL Editor
+   - Paste contents of `schema.sql`
+   - Click "Run"
+
+2. **Set `DATABASE_URL`** environment variable
+   - Find at: Supabase Dashboard → Settings → Database → Connection string
+
+3. **Restart the service** - Queue mode activates automatically when `DATABASE_URL` is set
+
 ## Overview
 
 This service provides an HTTP API for scraping websites using Playwright. It supports two modes:

@@ -2,6 +2,90 @@
 
 A complete starter template for building full-stack applications with Supabase, React, and Express.
 
+## Prerequisites
+
+- [ ] Node.js 18+ installed
+- [ ] Supabase account (free tier works)
+- [ ] Railway account (for deployment)
+
+## Human Setup Steps
+
+### Step 1: Create Supabase Project
+
+1. **Go to** [supabase.com](https://supabase.com) and sign in
+2. **Click** "New Project"
+3. **Fill in**:
+   - Project name: `my-app` (or your choice)
+   - Database password: Generate a strong one and **save it**
+   - Region: Choose closest to your users
+4. **Wait** for project to provision (~2 minutes)
+
+### Step 2: Get Your Credentials
+
+1. **Go to** Settings → API
+2. **Copy these values** (you'll need them for `.env`):
+   - Project URL → `SUPABASE_URL`
+   - `anon` `public` key → `SUPABASE_ANON_KEY`
+   - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY`
+
+3. **Go to** Settings → Database
+4. **Copy** Connection string (URI) → `DATABASE_URL`
+   - Replace `[YOUR-PASSWORD]` with the password you saved
+
+### Step 3: Copy and Configure
+
+```bash
+# Copy the template
+cp -r building-blocks/starters/supabase-fullstack my-new-project
+cd my-new-project
+
+# Create environment file
+cp env.example .env
+
+# Edit .env with your values from Step 2
+```
+
+### Step 4: Run Migrations
+
+1. **Open** Supabase Dashboard → SQL Editor
+2. **Copy** contents of `server/migrations/001_initial.sql`
+3. **Paste** and click "Run"
+
+Or use the CLI:
+```bash
+npm run db:migrate
+```
+
+### Step 5: Install and Run
+
+```bash
+npm install
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173) - you should see the app!
+
+## Environment Variables
+
+| Variable | Required | Where to Find |
+|----------|----------|---------------|
+| `SUPABASE_URL` | **Yes** | Supabase → Settings → API → Project URL |
+| `SUPABASE_ANON_KEY` | **Yes** | Supabase → Settings → API → anon public |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Supabase → Settings → API → service_role |
+| `DATABASE_URL` | **Yes** | Supabase → Settings → Database → Connection string |
+| `PORT` | No | Server port (default: 5001) |
+| `NODE_ENV` | No | `development` or `production` |
+
+```bash
+# Example .env
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.xxxxx.supabase.co:5432/postgres
+PORT=5001
+NODE_ENV=development
+```
+
 ## Overview
 
 This starter provides a production-ready foundation with:
@@ -11,24 +95,6 @@ This starter provides a production-ready foundation with:
 - **Database**: Supabase PostgreSQL
 - **Auth**: Supabase Auth with JWT verification
 - **Deployment**: Railway-ready configuration
-
-## Quick Start
-
-### 1. Copy the Template
-
-```bash
-cp -r building-blocks/starters/supabase-fullstack my-new-project
-cd my-new-project
-```
-
-### 2. Set Up Supabase
-
-1. Create a project at [supabase.com](https://supabase.com)
-2. Copy your credentials to `.env`:
-
-```bash
-cp .env.example .env
-```
 
 ```env
 # Supabase
